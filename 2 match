@@ -1,0 +1,900 @@
+
+import numpy as np
+
+import pandas as pd
+
+from sklearn.preprocessing import StandardScaler
+
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.tree import DecisionTreeClassifier
+
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+
+from sklearn.neighbors import KNeighborsClassifier
+
+from sklearn.svm import SVC
+
+from sklearn.metrics import (
+
+    accuracy_score,
+
+    precision_score,
+
+    recall_score,
+
+    f1_score,
+
+    confusion_matrix
+
+)
+
+files = [
+
+    "E0.csv",
+
+    "E0 (2).csv",
+
+    "E0 (3).csv",
+
+    "E0 (4).csv",
+
+    "E0 (5).csv"
+
+]
+
+dfs = []
+
+for file in files:
+
+    temp = pd.read_csv(file)
+
+    temp = temp[
+
+        [
+
+            "Date",
+
+            "HomeTeam",
+
+            "AwayTeam",
+
+            "FTHG",
+
+            "FTAG",
+
+            "FTR"
+
+        ]
+
+    ]
+
+    dfs.append(temp)
+
+df = pd.concat(
+
+    dfs,
+
+    ignore_index=True
+
+)
+
+df["Date"] = pd.to_datetime(
+
+    df["Date"],
+
+    dayfirst=True,
+
+    errors="coerce"
+
+)
+
+df["FTHG"] = pd.to_numeric(
+
+    df["FTHG"],
+
+    errors="coerce"
+
+)
+
+df["FTAG"] = pd.to_numeric(
+
+    df["FTAG"],
+
+    errors="coerce"
+
+)
+
+df = df.dropna(
+
+    subset=[
+
+        "Date",
+
+        "HomeTeam",
+
+        "AwayTeam",
+
+        "FTHG",
+
+        "FTAG",
+
+        "FTR"
+
+    ]
+
+)
+
+df = df.sort_values(
+
+    "Date"
+
+).reset_index(drop=True)
+
+elo = {}
+
+history = {}
+
+teams = pd.concat(
+
+    [
+
+        df["HomeTeam"],
+
+        df["AwayTeam"]
+
+    ]
+
+).unique()
+
+for team in teams:
+
+    elo[team] = 1500
+
+    history[team] = []
+
+def get_last5_goal_difference(team):
+
+    last5 = history[team][-5:]
+
+    if len(last5) == 0:
+
+        return 0
+
+    return np.mean(
+
+        [
+
+            match["goal_diff"]
+
+            for match in last5
+
+        ]
+
+    )
+
+def update_elo(
+
+    home,
+
+    away,
+
+    result
+
+):
+
+    home_elo = elo[home]
+
+    away_elo = elo[away]
+
+    expected_home = (
+
+        1 /
+
+        (
+
+            1 +
+
+            10 ** (
+
+                (away_elo - home_elo) / 400
+
+            )
+
+        )
+
+    )
+
+    if result == "H":
+
+        actual_home = 1
+
+    elif result == "D":
+
+        actual_home = 0.5
+
+    else:
+
+        actual_home = 0
+
+    k = 20
+
+    elo[home] = (
+
+        home_elo +
+
+        k *
+
+        (
+
+            actual_home -
+
+            expected_home
+
+        )
+
+    )
+
+    elo[away] = (
+
+        away_elo +
+
+        k *
+
+        (
+
+            (1 - actual_home) -
+
+            (1 - expected_home)
+
+        )
+
+    )
+
+rows = []
+
+for _, row in df.iterrows():
+
+    home = row["HomeTeam"]
+
+    away = row["AwayTeam"]
+
+    if (
+
+        len(history[home]) >= 5
+
+        and
+
+        len(history[away]) >= 5
+
+    ):
+
+        home_elo = elo[home]
+
+        away_elo = elo[away]
+
+        home_goal_diff = (
+
+            get_last5_goal_difference(home)
+
+        )
+
+        away_goal_diff = (
+
+            get_last5_goal_difference(away)
+
+        )
+
+        rows.append(
+
+            {
+
+                "HomeELO": home_elo,
+
+                "AwayELO": away_elo,
+
+                "ELO_Diff":
+
+                    home_elo - away_elo,
+
+                "Home_GoalDiff_Last5":
+
+                    home_goal_diff,
+
+                "Away_GoalDiff_Last5":
+
+                    away_goal_diff,
+
+                "GoalDiff_Diff":
+
+                    home_goal_diff -
+
+                    away_goal_diff,
+
+                "Target":
+
+                    row["FTR"]
+
+            }
+
+        )
+
+    home_goal_diff = (
+
+        row["FTHG"] -
+
+        row["FTAG"]
+
+    )
+
+    away_goal_diff = (
+
+        row["FTAG"] -
+
+        row["FTHG"]
+
+    )
+
+    history[home].append(
+
+        {
+
+            "goal_diff":
+
+                home_goal_diff
+
+        }
+
+    )
+
+    history[away].append(
+
+        {
+
+            "goal_diff":
+
+                away_goal_diff
+
+        }
+
+    )
+
+    update_elo(
+
+        home,
+
+        away,
+
+        row["FTR"]
+
+    )
+
+data = pd.DataFrame(rows)
+
+X = data[
+
+    [
+
+        "HomeELO",
+
+        "AwayELO",
+
+        "ELO_Diff",
+
+        "Home_GoalDiff_Last5",
+
+        "Away_GoalDiff_Last5",
+
+        "GoalDiff_Diff"
+
+    ]
+
+]
+
+y = data["Target"]
+
+split = int(len(data) * 0.80
+
+)
+
+X_train = X.iloc[:split]
+
+X_test = X.iloc[split:]
+
+y_train = y.iloc[:split]
+
+y_test = y.iloc[split:]
+
+scaler = StandardScaler()
+
+X_train_scaled = scaler.fit_transform(
+
+    X_train
+
+)
+
+X_test_scaled = scaler.transform(
+
+    X_test
+
+)
+
+models = {
+
+    "Logistic Regression":
+
+        LogisticRegression(
+
+            max_iter=1000
+
+        ),
+
+    "Decision Tree":
+
+        DecisionTreeClassifier(
+
+            max_depth=5,
+
+            min_samples_leaf=10,
+
+            random_state=42
+
+        ),
+
+    "Random Forest":
+
+        RandomForestClassifier(
+
+            n_estimators=300,
+
+            max_depth=8,
+
+            min_samples_leaf=5,
+
+            random_state=42
+
+        ),
+
+    "Gradient Boosting":
+
+        GradientBoostingClassifier(
+
+            n_estimators=200,
+
+            learning_rate=0.05,
+
+            max_depth=3,
+
+            random_state=42
+
+        ),
+
+    "KNN":
+
+        KNeighborsClassifier(
+
+            n_neighbors=15
+
+        ),
+
+    "SVM":
+
+        SVC(
+
+            kernel="rbf",
+
+            probability=True
+
+        )
+
+}
+
+results = []
+
+trained_models = {}
+
+for name, model in models.items():
+
+    if name in [
+
+        "Logistic Regression",
+
+        "KNN",
+
+        "SVM"
+
+    ]:
+
+        model.fit(
+
+            X_train_scaled,
+
+            y_train
+
+        )
+
+        predictions = model.predict(
+
+            X_test_scaled
+
+        )
+
+    else:
+
+        model.fit(
+
+            X_train,
+
+            y_train
+
+        )
+
+        predictions = model.predict(
+
+            X_test
+
+        )
+
+    accuracy = accuracy_score(
+
+        y_test,
+
+        predictions
+
+    )
+
+    precision = precision_score(
+
+        y_test,
+
+        predictions,
+
+        average="weighted",
+
+        zero_division=0
+
+    )
+
+    recall = recall_score(
+
+        y_test,
+
+        predictions,
+
+        average="weighted",
+
+        zero_division=0
+
+    )
+
+    f1 = f1_score(
+
+        y_test,
+
+        predictions,
+
+        average="weighted",
+
+        zero_division=0
+
+    )
+
+    results.append(
+
+        {
+
+            "Model": name,
+
+            "Accuracy": accuracy,
+
+            "Precision": precision,
+
+            "Recall": recall,
+
+            "F1": f1
+
+        }
+
+    )
+
+    trained_models[name] = model
+
+results_df = pd.DataFrame(
+
+    results
+
+)
+
+results_df = results_df.sort_values(
+
+    "F1",
+
+    ascending=False
+
+).reset_index(drop=True)
+
+print("\nMODEL RESULTS")
+
+print("=" * 70)
+
+print(
+
+    results_df.to_string(
+
+        index=False
+
+    )
+
+)
+
+best_model_name = (
+
+    results_df.iloc[0]["Model"]
+
+)
+
+best_model = trained_models[
+
+    best_model_name
+
+]
+
+print(
+
+    "\nBEST MODEL:",
+
+    best_model_name
+
+)
+
+if best_model_name in [
+
+    "Logistic Regression",
+
+    "KNN",
+
+    "SVM"
+
+]:
+
+    test_predictions = best_model.predict(
+
+        X_test_scaled
+
+    )
+
+else:
+
+    test_predictions = best_model.predict(
+
+        X_test
+
+    )
+
+print("\nCONFUSION MATRIX")
+
+print("=" * 70)
+
+print(
+
+    confusion_matrix(
+
+        y_test,
+
+        test_predictions,
+
+        labels=["H", "D", "A"]
+
+    )
+
+)
+
+def predict_match(
+
+    home,
+
+    away
+
+):
+
+    if home not in elo:
+
+        print(
+
+            "Home team not found:",
+
+            home
+
+        )
+
+        return
+
+    if away not in elo:
+
+        print(
+
+            "Away team not found:",
+
+            away
+
+        )
+
+        return
+
+    home_elo = elo[home]
+
+    away_elo = elo[away]
+
+    home_goal_diff = (
+
+        get_last5_goal_difference(
+
+            home
+
+        )
+
+    )
+
+    away_goal_diff = (
+
+        get_last5_goal_difference(
+
+            away
+
+        )
+
+    )
+
+    match_features = pd.DataFrame(
+
+        [
+
+            {
+
+                "HomeELO": home_elo,
+
+                "AwayELO": away_elo,
+
+                "ELO_Diff":
+
+                    home_elo -
+
+                    away_elo,
+
+                "Home_GoalDiff_Last5":
+
+                    home_goal_diff,
+
+                "Away_GoalDiff_Last5":
+
+                    away_goal_diff,
+
+                "GoalDiff_Diff":
+
+                    home_goal_diff -
+
+away_goal_diff
+                }
+
+        ]
+
+    )
+
+    if best_model_name in [
+
+        "Logistic Regression",
+
+        "KNN",
+
+        "SVM"
+
+    ]:
+
+        match_scaled = scaler.transform(
+
+            match_features
+
+        )
+
+        prediction = best_model.predict(
+
+            match_scaled
+
+        )
+
+        probabilities = (
+
+            best_model.predict_proba(
+
+                match_scaled
+
+            )
+
+        )
+
+    else:
+
+        prediction = best_model.predict(
+
+            match_features
+
+        )
+
+        probabilities = (
+
+            best_model.predict_proba(
+
+                match_features
+
+            )
+
+        )
+
+    print("\nMATCH")
+
+    print("=" * 70)
+
+    print(
+
+        home,
+
+        "vs",
+
+        away
+
+    )
+
+    print(
+
+        "\nPrediction:",
+
+        prediction[0]
+
+    )
+
+    print("\nProbabilities:")
+
+    for team_result, probability in zip(
+
+        best_model.classes_,
+
+        probabilities[0]
+
+    ):
+
+        print(
+
+            team_result,
+
+            ":",
+
+            round(
+
+                probability * 100,
+
+                2
+
+            ),
+
+            "%"
+
+        )
+
+    print("\nFEATURES")
+
+    print(
+
+        match_features.to_string(
+
+            index=False
+
+        )
+
+    )
+
+predict_match(
+
+    "Liverpool",
+
+    "Arsenal"
+)
